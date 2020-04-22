@@ -14,23 +14,15 @@ main = hspec spec
 
 spec :: Spec
 spec = with app $ do
-  describe "GET /" $ do
-    it "responds with 200" $ do
-      get "/" `shouldRespondWith` 200
 
-    it "responds with 'hello'" $ do
-      get "/" `shouldRespondWith` "hello"
-
-    it "responds with 200 / 'hello'" $ do
-      get "/" `shouldRespondWith` "hello" {matchStatus = 200}
-
-    it "has 'Content-Type: text/plain; charset=utf-8'" $ do
-      get "/" `shouldRespondWith` 200 {matchHeaders = ["Content-Type" <:> "text/plain; charset=utf-8"]}
-
-  describe "GET /some-json" $ do
+  describe "GET /customers" $ do
     it "responds with some JSON" $ do
-      get "/some-json" `shouldRespondWith` expectedJsonResponse
+      get "/customers" `shouldRespondWith` "\"[]\""
 
-expectedJsonResponse = 
-  let ResponseMatcher status headers body = [json|{foo: 23, bar: 42}|]
-  in ResponseMatcher status [hContentType <:> "application/json; charset=utf-8"] body
+--jsonResponseMatcher status body = ResponseMatcher status [hContentType <:> "application/json; charset=utf-8"] body
+
+--successfulJsonResp body = jsonResponseMatcher 200 body
+
+--expectedJsonResponse = 
+--  let ResponseMatcher status headers body = [json|{foo: 23, bar: 42}|]
+--  in ResponseMatcher status [hContentType <:> "application/json; charset=utf-8"] body

@@ -24,6 +24,8 @@ library
                      , text
                      , mongoDB
                      , resource-pool
+                     , http-types
+                     , bytestring
   default-language:    Haskell2010
 
 executable foo-exe

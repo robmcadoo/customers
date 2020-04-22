@@ -1,13 +1,20 @@
 {-# LANGUAGE OverloadedStrings, QuasiQuotes #-}
-module Example (runApp, app, pool, appConfigReader, runQuery) where
+{-# LANGUAGE DeriveGeneric #-}
+
+module Example (runApp, app, appConfigReader) where
+
 
 import           Control.Exception
-import           Data.Aeson (Value(..), object, (.=))
+import           GHC.Generics
+import qualified Data.Aeson as DA
+import qualified Data.Aeson.Text as DAT
+import qualified Data.ByteString.Lazy as DBL
+import Network.HTTP.Types (notFound404, badRequest400)
 import           Network.Wai (Application)
 import qualified Web.Scotty as S
 import           Web.Scotty.Trans hiding (next)
 import           Control.Monad.Reader
-import           Data.Text.Lazy
+import           Data.Text.Lazy hiding (find)
 import           Database.MongoDB
 import           Database.MongoDB.Query
 import           Data.Pool
@@ -15,20 +22,87 @@ import           Data.Pool
 type ScottyD = ScottyT Text (ReaderT AppConfig IO)
 type ActionD = ActionT Text (ReaderT AppConfig IO)
 
-data AppConfig = CustomerConfig {dbPool :: Pool Pipe}
+data AppConfig = CustomerConfig {
+    dbPool :: (Pool Pipe)
+}
+
+data User = User { 
+        email :: String, 
+        name :: String,  
+        phone :: String 
+} deriving (Generic, Show) 
+ 
+instance DA.ToJSON User where 
+  toEncoding = DA.genericToEncoding DA.defaultOptions
+
+instance DA.FromJSON User
 
 ip = "127.0.0.1"
 database = "krizo"
 
-pool = createPool (connect $ host ip) close 1 300 5
+parseUser :: Document -> Maybe User
+parseUser doc = do
+  name <- cast' =<< look "name" doc
+  email <- cast' =<< look "email" doc
+  phone <- cast' =<< look "phone" doc
+  Just $ User name email phone
 
-runQuery :: Pool Pipe -> Action IO a -> IO a
-runQuery pool query = withResource pool $
-  (\pipe -> access pipe master database query)
+parseUsers :: [Document] -> [Maybe User]
+parseUsers docs = fmap parseUser docs
+
+unparseUser :: User -> Document
+unparseUser u = ["name" := val (name u),
+                 "email" := val (email u),
+                 "phone" := val (phone u)]
+
+runDB :: Action IO Cursor -> ActionD [Document]
+runDB a = do
+  conf <- lift ask
+  let pool = dbPool conf
+  -- Here we just fetch all. When collection contains many documents, we definitely
+  -- want to paginate this.
+  liftIO $ withResource pool (\pipe -> (access pipe master "krizo" (a >>= rest)))
+
+runDBInsert :: Action IO Value -> ActionD Value
+runDBInsert a = do
+  conf <- lift ask
+  let pool = dbPool conf
+  liftIO $ withResource pool (\pipe -> (access pipe master "krizo" a))
+
+searchCustomersQuery searchTerm = (find $ select [ "$text" =: [ "$search" =: searchTerm ] ]  "user")
+
+listCustomersQuery = (find $ select [] "user")
+
+addCustomersQuery cust = (insert "user" $ unparseUser cust)
+
+queryWithSerialisation :: Action IO Cursor -> ActionD ()
+queryWithSerialisation query = do
+  res <- runDB listCustomersQuery
+  json $ DAT.encodeToLazyText $ parseUsers res
+
+listCustomers :: ActionD ()
+listCustomers = queryWithSerialisation listCustomersQuery
+
+searchCustomers :: ActionD ()
+searchCustomers = do 
+  searchTerm <- param "searchterm"
+  queryWithSerialisation (searchCustomersQuery (searchTerm :: String))
+
+addCustomer :: ActionD ()
+addCustomer = do
+  reqBody <- body
+  let customerM = (DA.decode $ (reqBody :: DBL.ByteString)) :: Maybe User
+  (case customerM of
+    Just customer -> do 
+      runDBInsert $ addCustomersQuery customer
+      json $ DAT.encodeToLazyText ([] :: [String])
+    Nothing -> do
+      status badRequest400
+      json $ DAT.encodeToLazyText ("Could not parse user" :: String))
 
 appConfigReader :: ReaderT AppConfig IO a -> IO a
 appConfigReader r = do
-  dbPool <- pool
+  dbPool <- createPool (connect $ host ip) close 1 300 5
   let appConfig = CustomerConfig dbPool
   runReaderT r appConfig
 
@@ -38,11 +112,9 @@ runApp = do
 
 app' :: ScottyD ()
 app' = do
-  get "/" $ do
-    text "hello"
-
-  get "/some-json" $ do
-    json $ object ["foo" .= Number 23, "bar" .= Number 42]
+  get  "/customers" listCustomers
+  get  "/customers/:searchterm" searchCustomers
+  post "/customers/new" addCustomer
 
 app :: IO Application
 app = do
