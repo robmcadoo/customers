@@ -24,6 +24,7 @@ type ActionD = ActionT Text (ReaderT AppConfig IO)
 
 data AppConfig = CustomerConfig {
     dbPool :: (Pool Pipe)
+  , runDBF :: Action IO Cursor -> ActionD [Document]
 }
 
 data User = User { 
@@ -59,7 +60,7 @@ runDB :: Action IO Cursor -> ActionD [Document]
 runDB a = do
   conf <- lift ask
   let pool = dbPool conf
-  -- Here we just fetch all. When collection contains many documents, we definitely
+  -- Here we just fetch all. When the collection contains many documents, we definitely
   -- want to paginate this.
   liftIO $ withResource pool (\pipe -> (access pipe master "krizo" (a >>= rest)))
 
@@ -77,7 +78,8 @@ addCustomersQuery cust = (insert "user" $ unparseUser cust)
 
 queryWithSerialisation :: Action IO Cursor -> ActionD ()
 queryWithSerialisation query = do
-  res <- runDB listCustomersQuery
+  conf <- lift ask
+  res <- (runDBF conf) listCustomersQuery
   json $ DAT.encodeToLazyText $ parseUsers res
 
 listCustomers :: ActionD ()
@@ -88,6 +90,8 @@ searchCustomers = do
   searchTerm <- param "searchterm"
   queryWithSerialisation (searchCustomersQuery (searchTerm :: String))
 
+-- We could refactor reusable logic out of here, but for now there seems to be little
+-- value in that since we have only one endpoint that does inserts. TODO for the future
 addCustomer :: ActionD ()
 addCustomer = do
   reqBody <- body
@@ -103,19 +107,19 @@ addCustomer = do
 appConfigReader :: ReaderT AppConfig IO a -> IO a
 appConfigReader r = do
   dbPool <- createPool (connect $ host ip) close 1 300 5
-  let appConfig = CustomerConfig dbPool
+  let appConfig = CustomerConfig dbPool runDB
   runReaderT r appConfig
 
 runApp :: IO ()
 runApp = do
-  scottyT 3000 appConfigReader app'
+  scottyT 3000 appConfigReader app
 
-app' :: ScottyD ()
-app' = do
+app :: ScottyD ()
+app = do
   get  "/customers" listCustomers
   get  "/customers/:searchterm" searchCustomers
   post "/customers/new" addCustomer
 
-app :: IO Application
-app = do
-  scottyAppT appConfigReader app'
+--app :: IO Application
+--app = do
+--  scottyAppT appConfigReader app'
