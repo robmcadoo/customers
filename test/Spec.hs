@@ -67,7 +67,7 @@ main = do
   
   hspec $ setUpApp db $ do
 
-    describe "GET /customers" $ do
+    describe "GET /customers with no data in the DB" $ do
       it "responds with empty JSON" $ do
         get "/customers/doesnotexit" `shouldRespondWith` "[]"
         get "/customers/" `shouldRespondWith` "[]"
@@ -76,6 +76,7 @@ main = do
       it "should 409 when we create the same user twice" $ do
         (post "/customers/new" (encode $ testUser)
           `shouldRespondWith` 201)
+        -- Check the customers endpoint for the created user
         (get "/customers" `shouldRespondWith`
           [json|[{email: "rob@example.com", name: "Rob", phone: "+123456"}]|])
         (post "/customers/new" (encode $ testUser)
@@ -87,5 +88,12 @@ main = do
           `shouldRespondWith` "" {matchStatus = 201})
         (get "/customers/Fred" `shouldRespondWith` 
            [json|[{email: "fred@example.com", name: "Fred Frederiksen", phone: "+12345"}]|])
+
+    describe "Trying to create a user with missing data should fail" $ do
+      it "should return client error for missing data"
+        -- The error set by this endpoint is mostly informative at the moment
+        -- Proper error handling would provide a serialised error object
+        -- TODO: quickcheck to test the missing cases here?
+        (post "/customers/new" "" `shouldRespondWith` 400)
 
   dropDB db
